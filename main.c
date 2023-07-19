@@ -4,6 +4,7 @@
 #include <time.h>
 #include <string.h>
 #include <pthread.h>
+#include <sys/stat.h>
 
 #include "bmp.h"
 
@@ -318,6 +319,11 @@ int main() {
   color_table->colors[6] = (color){0,   255, 255};
   color_table->colors[7] = (color){255, 0,   255};
 
+  struct stat st;
+  if (stat("images", &st) != 0 || ~S_ISDIR(st.st_mode)) {
+    mkdir("images", 0700);
+  }
+  
   int space = ipow(RADIX, ipow(RADIX, WIDTH));
 
   int32_t row_size = ((X*3 + 3)/4)*4;
