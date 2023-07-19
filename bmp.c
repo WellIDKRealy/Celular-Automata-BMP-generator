@@ -30,30 +30,25 @@ void image_fill(image* img, char color) {
   }
 }
 
-char* img_to_bmp(image* img, int32_t* size) {
-  int32_t row_size = ((img->x*3 + 3)/4)*4;
-  int32_t data_size = row_size*img->y;
-  *size = 54 + data_size;
-  
-  char* ret = malloc(*size);
-  ret[0] = 'B';            // Signature
-  ret[1] = 'M';            // Signature
-  *(int32_t*)(ret + 2) = *size;      // File size
-  *(int32_t*)(ret + 6) = 0;          // Reserved
-  *(int32_t*)(ret + 10) = 54;        // Data offset
-  *(int32_t*)(ret + 14) = 40;        // DIB header size
-  *(int32_t*)(ret + 18) = img->x;    // Width
-  *(int32_t*)(ret + 22) = img->y;    // Height
-  *(int32_t*)(ret + 26) = 1;         // planes
-  *(int16_t*)(ret + 28) = 24;        // Bits per pixel
-  *(int16_t*)(ret + 30) = 0;         // Compression
-  *(int32_t*)(ret + 34) = data_size; // Data size
-  *(int32_t*)(ret + 38) = 3780;      // 96 DPI X
-  *(int32_t*)(ret + 42) = 3780;      // 96 DPI Y
-  *(int32_t*)(ret + 46) = 0;         // Colors in palette
-  *(int32_t*)(ret + 50) = 0;         // Important colors
+void img_to_bmp_reuse(image* img, char* bytes, int32_t row_size, int32_t data_size, int32_t* size) {
+  bytes[0] = 'B';            // Signature
+  bytes[1] = 'M';            // Signature
+  *(int32_t*)(bytes + 2) = *size;      // File size
+  *(int32_t*)(bytes + 6) = 0;          // Reserved
+  *(int32_t*)(bytes + 10) = 54;        // Data offset
+  *(int32_t*)(bytes + 14) = 40;        // DIB header size
+  *(int32_t*)(bytes + 18) = img->x;    // Width
+  *(int32_t*)(bytes + 22) = img->y;    // Height
+  *(int32_t*)(bytes + 26) = 1;         // planes
+  *(int16_t*)(bytes + 28) = 24;        // Bits per pixel
+  *(int16_t*)(bytes + 30) = 0;         // Compression
+  *(int32_t*)(bytes + 34) = data_size; // Data size
+  *(int32_t*)(bytes + 38) = 3780;      // 96 DPI X
+  *(int32_t*)(bytes + 42) = 3780;      // 96 DPI Y
+  *(int32_t*)(bytes + 46) = 0;         // Colors in palette
+  *(int32_t*)(bytes + 50) = 0;         // Important colors
 
-  char* pixel_array = ret + 54;
+  char* pixel_array = bytes + 54;
   for(int32_t y = 0; y < img->y; y++) {
     for(int32_t x = 0; x < img->x; x++) {
       color c = img->color_table->colors[img->data[y*img->x + x]];
@@ -62,6 +57,15 @@ char* img_to_bmp(image* img, int32_t* size) {
       pixel_array[y*row_size + x*3 + 2] = c.blue;
     }
   }
+}
 
+char* img_to_bmp(image* img, int32_t* size) {
+  int32_t row_size = ((img->x*3 + 3)/4)*4;
+  int32_t data_size = row_size*img->y;
+  *size = 54 + data_size;
+
+  char* ret = malloc(*size);
+  img_to_bmp_reuse(img, ret, row_size, data_size, size);
+  
   return ret;
 }

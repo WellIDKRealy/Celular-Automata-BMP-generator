@@ -2,10 +2,20 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+#include <string.h>
+#include <pthread.h>
 
 #include "bmp.h"
 
 #define true 1
+
+#define X 600
+#define Y 800
+
+#define THREADS 20
+
+#define RADIX 2
+#define WIDTH 3
 
 /* int ipow(int base, int exp) { */
 /*   int result = 1; */
@@ -20,6 +30,14 @@
 /*     base *= base; */
 /*   } */
 /* } */
+
+int ilog10(int i) {
+  int ret = -1;
+  for(; i != 0; i /= 10) {
+    ret++;
+  }
+  return ret;
+}
 
 int ipow(int base, int exp) {
   int result = 1;
@@ -57,14 +75,14 @@ rules make_random_rules(int width, int radix) {
 }
 
 rules make_specific_rules(int width, int radix, int def, int** scases) {
-  int size = ipow(radix, width);
+  size_t size = ipow(radix, width);
   int* cases = malloc(sizeof(int)*size);
   for(int i = 0; i < size; i++) {
     cases[i] = def;
   }
 
   int code;
-  for(int i = 0; scases[i] != NULL; i++) {
+  for(size_t i = 0; scases[i] != NULL; i++) {
     code = 0;
     for(int j = 1; j <= width; j++) {
       code *= radix;
@@ -75,6 +93,51 @@ rules make_specific_rules(int width, int radix, int def, int** scases) {
   return make_rules(width, radix, cases);
 }
 
+rules make_empty_rules(int width, int radix) {
+  size_t size = ipow(radix, width);
+  int* cases = malloc(sizeof(int)*size);
+
+  for(; size != 0; size--) {
+    cases[size - 1] = 0;
+  }
+  
+  return make_rules(width, radix, malloc(sizeof(int)*ipow(radix, width)));
+}
+
+rules copy_rules(rules ruls) {
+  rules ret;
+  ret.width = ruls.width;
+  ret.min = ruls.min;
+  ret.max = ruls.max;
+  ret.radix = ruls.radix;
+
+  size_t size = ipow(ruls.radix, ruls.width);
+  ret.cases = malloc(sizeof(int)*size);
+  memcpy(ret.cases, ruls.cases, size);
+  
+  return ret;
+}
+
+void rules_next(rules rules) {
+  for(int i = 0; true; i++) {
+    rules.cases[i] += 1;
+    if(rules.cases[i] != rules.radix) {
+      break;
+    }
+    rules.cases[i] = 0;
+  }
+}
+
+void rules_next_by(rules rules, int by) {
+  for(int i = 0; true; i++) {
+    rules.cases[i] += by;
+    if(rules.cases[i] < rules.radix) {
+      break;
+    }
+    by = rules.cases[i]/rules.radix;
+    rules.cases[i] %= rules.radix;
+  }
+}
 
 typedef struct {
   int width;
@@ -86,6 +149,10 @@ state make_state(int width, int* data) {
   ret.width = width;
   ret.data = data;
   return ret;
+}
+
+state make_empty_state(int width) {
+  return make_state(width, malloc(sizeof(int)*width));
 }
 
 state make_random_state(int width, int radix) {
@@ -103,6 +170,13 @@ state make_center_state(int width, int val, int def) {
   }
   data[width/2] = val;
   return make_state(width, data);
+}
+
+void set_center_state(state state, int val, int def) {
+  for(int i = 0; i < state.width; i++) {
+    state.data[i] = def;
+  }
+  state.data[state.width/2] = val;
 }
 
 int* automata(state state, int* new_state, rules rules) {
@@ -145,10 +219,10 @@ image* make_automata_image(state state, rules rules, int depth, colortable* colo
   int* swap_tmp;
 
   for(int i = 0; i < state.width; i++) {
-    image_set(img, i, 0, state.data[i]);
+    image_set(img, i, depth - 1, state.data[i]);
   }
 
-  for(int i = 1; i < depth; i++) {
+  for(depth -= 1; depth != 0; depth--) {
     automata(state, swap_state, rules);
 
     swap_tmp = state.data;
@@ -156,15 +230,83 @@ image* make_automata_image(state state, rules rules, int depth, colortable* colo
     swap_state = swap_tmp;
 
     for(int j = 0; j < state.width; j++) {
-      image_set(img, j, i, state.data[j]);
+      image_set(img, j, depth - 1, state.data[j]);
     }
   }
 
   return img;
 }
 
+void set_automata_image_sstate(state state, int* swap_state, rules rules, int depth, image* img) {
+  int* swap_tmp;
+
+  for(int i = 0; i < state.width; i++) {
+    image_set(img, i, depth - 1, state.data[i]);
+  }
+
+  for(depth -= 1; depth != 0; depth--) {
+    automata(state, swap_state, rules);
+
+    swap_tmp = state.data;
+    state.data = swap_state;
+    swap_state = swap_tmp;
+
+    for(int j = 0; j < state.width; j++) {
+      image_set(img, j, depth - 1, state.data[j]);
+    }
+  }
+}
+
+image* sierpinski_image(int level, colortable* color_table) {
+  state state = make_center_state(ipow(2, level + 1) - 1, 1, 0);
+
+  int* spec[3];
+  spec[0] = (int[]){1, 0, 0, 1};
+  spec[1] = (int[]){1, 1, 0, 0};
+  spec[2] = NULL;
+   
+  rules rules = make_specific_rules(3, 2, 0, spec);
+  return make_automata_image(state, rules, ipow(2, level), color_table);
+}
+
+typedef struct {
+  int space;
+  int32_t row_size;
+  int32_t data_size;
+  int32_t size;
+  colortable* color_table;
+  rules rules;
+  int from;
+} gen_images_data;
+
+void* gen_images(void* pass) {
+  gen_images_data* data = (gen_images_data*)pass;
+    
+  image* img = make_empty_image(X, Y, data->color_table);
+  char* bytes = malloc(sizeof(char)*data->size);
+
+  state state = make_empty_state(X);
+  int* swap_state = malloc(sizeof(int)*state.width);
+
+  char str[ilog10(data->size) + 13];
+  for(int i = data->from; i < data->space; i += THREADS) {
+    set_center_state(state, 1, 0);
+    set_automata_image_sstate(state, swap_state, data->rules, Y, img);
+    img_to_bmp_reuse(img, bytes, data->row_size, data->data_size, &data->size);
+
+    sprintf(str, "images/%d.bmp\0", i);
+
+    FILE* fptr = fopen(str, "w");
+    fwrite(bytes, data->size, 1, fptr);
+    fclose(fptr);
+
+    rules_next_by(data->rules, THREADS);
+    //rules_next(data->rules);
+  }
+}
+
 int main() {
-  srand(time(NULL));
+  // srand(time(NULL));
 
   colortable* color_table = make_empty_colortable(8); 
   color_table->colors[0] = (color){0,   0,   0  };
@@ -176,29 +318,36 @@ int main() {
   color_table->colors[6] = (color){0,   255, 255};
   color_table->colors[7] = (color){255, 0,   255};
 
-  state state = make_center_state(ipow(2, level + 1) - 1, 1, 0);
-  // state state = make_random_state(40, 2);
-  //rules rules = make_random_rules(3, 2);
+  int space = ipow(RADIX, ipow(RADIX, WIDTH));
 
-  int* spec[3];
-  spec[0] = (int[]){1, 0, 0, 1};
-  spec[1] = (int[]){1, 1, 0, 0};
-  spec[2] = NULL;
-  
-  rules rules = make_specific_rules(3, 2, 0, spec);
+  int32_t row_size = ((X*3 + 3)/4)*4;
+  int32_t data_size = row_size*Y;
+  int32_t size = 54 + data_size;
 
-  image* img = make_automata_image(state, rules, ipow(2, level), color_table);
-  
-  /* char ref_table[2] = {' ', '#'}; */
+  rules rules = make_empty_rules(WIDTH, RADIX);
 
-  /* display_automata(state, rules, ipow(2, level), ref_table); */
-  /* fflush(stdout); */
+  pthread_t threads[THREADS];
+  int thread = 0;
+  while(true) {
+    gen_images_data* pass = malloc(sizeof(gen_images_data));
+    pass->space = space;
+    pass->row_size = row_size;
+    pass->data_size = data_size;
+    pass->size = size;
+    pass->color_table = color_table;
+    pass->rules = copy_rules(rules);
+    pass->from = thread;
+    
+    pthread_create(&threads[thread], NULL, gen_images, (void*)pass);
 
-  int32_t size;
-  char* bytes = img_to_bmp(img, &size);
-  
-  FILE* fptr = fopen("out.bmp", "w");
-  fwrite(bytes, size, 1, fptr);
-  fclose(fptr);
-  
+    thread++;
+    if(thread == THREADS) {
+      break;
+    }
+    rules_next(rules);
+  }
+
+  for(int i = 0; i < THREADS; i++) {
+    pthread_join(threads[i], NULL);
+  }
 }
